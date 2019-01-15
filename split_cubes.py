@@ -45,6 +45,7 @@ class cube:
         assert(len(x) == self.dimension)
         return all([li <= xi for li,xi in zip(self.lefts,x)]+[xi <= ri for xi,ri in zip(x,self.rights)])
 
+    #half the cube along the i-th axis
     def split(self,i):
         print('trying to split the cube: ', self)
         center_i = (self.lefts[i] + self.rights[i])/2
@@ -54,49 +55,51 @@ class cube:
                      self.min_scale, self.max_aspect_ratio, self.top_parent_boundaries)
         cube2 = cube(new_left, self.rights,\
                      self.min_scale, self.max_aspect_ratio, self.top_parent_boundaries)
-        if((cube1.aspect_ratio <= self.max_aspect_ratio)\
-            &(cube1.smallest_length >= self.min_scale)):      
-            print('into: ', cube1,' and ', cube2)              
-            return [cube1, cube2,]
-        else:
-            if(cube1.aspect_ratio>self.max_aspect_ratio):
-                print(cube1.aspect_ratio)
-                print('Aspect Ratio too big, returning original cube.')
-                return [self,]
-            else:
-                print(cube1.smallest_length)
-                print('Axis split below smallest length, returning original cube.')
-                return [self,]
+        #too slim?             
+        if(cube1.aspect_ratio>self.max_aspect_ratio):
+            print(cube1.aspect_ratio)
+            print('Aspect Ratio too big, returning original cube.')
+            return [self,]
+        #too small axes?    
+        if(cube1.smallest_length<self.min_scale):
+            print(cube1.smallest_length)
+            print('Axis split below smallest length, returning original cube.')
+            return [self,]                
+        #neither, so split    
+        print('into: ', cube1,' and ', cube2)              
+        return [cube1, cube2,]                
 
     def __str__(self):
         return 'x'.join([str([l,r]) for l,r in zip(self.lefts, self.rights)])
 
-    def rectangle_coods(self):
-        #for plots generate lower left (x,y) from dims 1,2 and width, height
-        #from there too
+    #generate matplotlib.rectangle 2d coods based on the first two dims 
+    def rectangle_coods(self):                
         return ((self.lefts[0],self.lefts[1]), self.rights[0] - self.lefts[0], self.rights[1] - self.lefts[1])
 
-test_cube = cube([0,0,0],[1,1,1])
+def gen_random_2d_partition(split_tries = 32):
+    from random import randint, shuffle
+    test_cube = cube([0,0],[1,1],min_scale=.05)
+    rd = lambda : randint(0,test_cube.dimension-1)
+    rd1 = lambda : randint(0,1)
+    l = [test_cube]
+    for i in range(split_tries):
+        x = l.pop()
+        l = l + x.split(rd())
+        shuffle(l)
+    return l    
 
-from random import randint
-rd = lambda : randint(0,test_cube.dimension-1)
-rd1 = lambda : randint(0,1)
+def plot_list_of_cubes(l=list()):
+    import matplotlib; import matplotlib.pyplot as plt
+    from random import random 
+    if(len(l)==0):
+        l = gen_random_2d_partition()
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    for c in l:
+        rect = matplotlib.patches.Rectangle(*(c.rectangle_coods()), color=(random(),random(),random()))
+        ax.add_patch(rect)
+    plt.xlim([1.1*(c.top_parent_boundaries[0][0]-.1), 1.1*(c.top_parent_boundaries[1][0])+.1])
+    plt.xlim([1.1*(c.top_parent_boundaries[0][1]-.1), 1.1*(c.top_parent_boundaries[1][1])+.1])
+    plt.show()
 
-for i in range(10):
-    x = test_cube.split(rd()) 
-    ix = min(len(x)-1,rd1())        
-    test_cube = x[ix]
-
-import matplotlib; import matplotlib.pyplot as plt
-fig = plt.figure()
-ax = fig.add_subplot(111)
-rect1 = matplotlib.patches.Rectangle((-200,-100), 400, 200, color='yellow')
-rect2 = matplotlib.patches.Rectangle((0,150), 300, 20, color='red')
-rect3 = matplotlib.patches.Rectangle((-300,-50), 40, 200, color='#0099FF')
-ax.add_patch(rect1)
-ax.add_patch(rect2)
-ax.add_patch(rect3)
-plt.xlim([-400, 400])
-plt.ylim([-400, 400])
-plt.show()
-
+plot_list_of_cubes();
