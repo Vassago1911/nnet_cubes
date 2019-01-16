@@ -143,11 +143,15 @@ class data_cube(cube):
         #not homogeneous, still splittable per size, let's find the best axis
         if(len(self.get_split_axes())==1):
             #best axis known it's the only one :)
-            return cube.split(self,self.get_split_axes()[0])
+            return self.split(self.get_split_axes()[0],df,scaler)
         #now we have more than one axis and want to find the best one to split 
         homogeneity_candidate = -1000
         candidates = [1,2]
-        for ax in self.get_split_axes():
+        axes = self.get_split_axes()
+        #I don't want biases along axes coming from sorting of the axes, so shuffle
+        from random import shuffle
+        shuffle(axes)
+        for ax in axes:
             #try to split, find maximal homogeneity among candidates
             c1,c2 = self.split(ax,df,scaler)
             if max(c1.homogeneity, c2.homogeneity) > homogeneity_candidate:
@@ -216,8 +220,10 @@ def partition_datacubes_for_df(df):
         if(len(cs)==1): #couldn't split, find right stack / reason
             if(len(cs[0].classes)==0):
                 empty_stack.append(cs[0])
+                continue
             if(len(cs[0].classes)==1):
                 homog_stack.append(cs[0])
+                continue
             unsplit_stack.append(cs[0])
         else:    
             #did split, but not done
@@ -226,7 +232,13 @@ def partition_datacubes_for_df(df):
     return homog_stack, empty_stack, unsplit_stack
 
 df = example_df_xor(10000) 
-cc = from_dataframe(df)
-#print(cc.classes)
 
+from sklearn.datasets import load_iris
+import pandas as pd
 
+df = pd.DataFrame(load_iris().data)
+df['target'] = load_iris().target
+
+ll, _, _ = partition_datacubes_for_df(df)
+
+plot_list_of_cubes(ll)
