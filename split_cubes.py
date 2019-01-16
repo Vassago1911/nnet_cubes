@@ -7,6 +7,21 @@ class cube:
     aspect_ratio = -1
     min_scale = .1
     max_aspect_ratio = 10.
+    splittable = False
+
+    #where are we allowed to split?
+    def get_split_axes(self):
+        def aspect_ratio(lgts):                
+            return max(lgts)/min(lgts)
+        halvable_lengths = [self.min_scale < (j-i)/2 for i,j in zip(self.lefts,self.rights)]
+        ixs = [i for i,x in enumerate(halvable_lengths) if x]        
+        lengths = [j-i for i,j in zip(self.lefts, self.rights)]
+        jxs = list()
+        for ix in ixs:
+            l = lengths[:ix] + [lengths[ix]/2,] + lengths[ix+1:]            
+            if(aspect_ratio(l)<self.max_aspect_ratio):
+                jxs = jxs + [ix,]        
+        return jxs
 
     def __init__(self,ls=[1,], 
                       rs=[1,], 
@@ -39,6 +54,8 @@ class cube:
             self.top_parent_boundaries = [self.lefts, self.rights]
         else:
             self.top_parent_boundaries = top_parent_boundaries
+        if(len(self.get_split_axes())>0):
+            self.splittable = True
 
     #is a point part of this cube?
     def contains(self,x):
@@ -47,25 +64,15 @@ class cube:
 
     #half the cube along the i-th axis
     def split(self,i):
-        print('trying to split the cube: ', self)
+        if(not self.splittable):
+            print('Cube is already too small, no split!')
+            return [self,]
+        print('Split the cube ',self,':')        
         center_i = (self.lefts[i] + self.rights[i])/2
         new_left = list(self.lefts); new_left[i] = center_i
         new_right = list(self.rights); new_right[i] = center_i  
-        cube1 = cube(self.lefts, new_right,\
-                     self.min_scale, self.max_aspect_ratio, self.top_parent_boundaries)
-        cube2 = cube(new_left, self.rights,\
-                     self.min_scale, self.max_aspect_ratio, self.top_parent_boundaries)
-        #too slim?             
-        if(cube1.aspect_ratio>self.max_aspect_ratio):
-            print(cube1.aspect_ratio)
-            print('Aspect Ratio too big, returning original cube.')
-            return [self,]
-        #too small axes?    
-        if(cube1.smallest_length<self.min_scale):
-            print(cube1.smallest_length)
-            print('Axis split below smallest length, returning original cube.')
-            return [self,]                
-        #neither, so split    
+        cube1 = cube(self.lefts, new_right,self.min_scale, self.max_aspect_ratio, self.top_parent_boundaries)
+        cube2 = cube(new_left, self.rights,self.min_scale, self.max_aspect_ratio, self.top_parent_boundaries)           
         print('into: ', cube1,' and ', cube2)              
         return [cube1, cube2,]                
 
@@ -76,18 +83,82 @@ class cube:
     def rectangle_coods(self):                
         return ((self.lefts[0],self.lefts[1]), self.rights[0] - self.lefts[0], self.rights[1] - self.lefts[1])
 
+class data_cube(cube):    
+    def get_classes(self,df,scaler):
+        import pandas as pd
+        df_target = df[df.columns[-1]]
+        df = pd.DataFrame(scaler.transform(df[df.columns[:-1]]))
+        df['target'] = df_target      
+        ls = self.lefts; rs = self.rights  
+        for i,_ in enumerate(ls):
+            df = df[ls[i]<=df[i]]
+            df = df[df[i]<=rs[i]] 
+        self.classes = dict(df['target'].value_counts()) #this is why it's only classification!!
+        self.homogeneous = len(self.classes) <= 1 #less than 1 class in the cube => homogeneous or empty
+
+    def get_homogeneity(self):
+        class_pairs = [(i,j) for i in self.classes for j in self.classes if i!=j]
+        f = lambda x,y: (x-y)/(x+y)
+        res = list()        
+        for i,j in class_pairs:
+            res = res + [f(self.classes[i],self.classes[j]),]
+        self.homogeneity = min(res)    
+        return min(res)    
+
+    def best_split(self,df,scaler):
+        #make sure they're set
+        self.get_classes(df,scaler)
+        self.get_homogeneity()
+
+        #if the cube is already homogeneous, don't split
+        if(self.homogeneous):
+            print('Already homogenous, don\'t split.')
+            return [self,]
+        if(not self.splittable):
+            print('Too small to split.')
+            return [self,]
+        #not homogeneous, still splittable per size, let's find the best axis
+        if(len(self.get_split_axes())==1):
+            #best axis known it's the only one :)
+            return cube.split(self,self.get_split_axes()[0])
+        #now we have more than one axis and want to find the best one to split 
+        homogeneity_candidate = -1000
+        candidates = [1,2]
+        for ax in self.get_split_axes():
+            #try to split, find maximal homogeneity among candidates
+            c1,c2 = self.split(ax)
+            if max(c1.homogeneity, c2.homogeneity) > homogeneity_candidate:
+                candidates = [c1,c2]                
+                homogeneity_candidate = max(c1.homogeneity, c2.homogeneity)
+            else:
+                pass
+        return candidates      
+
+#initial construction of a cube from a dataframe
+def from_dataframe(df, min_scale=.1,max_ratio=10):
+    import pandas as pd
+    df = df.select_dtypes(include='number')                            
+    from sklearn.preprocessing import MinMaxScaler
+    scaler = MinMaxScaler()
+    scaler.fit(df[df.columns[:-1]])               
+    ls = len(df.columns[:-1])*(0,) #left boundaries are zeroes
+    rs = len(df.columns[:-1])*(1,) #right boundaries are ones
+    c = data_cube(ls, rs, min_scale, max_ratio, top_parent_boundaries = (ls,rs))            
+    return c, df, scaler #prepared for handoff to get_classes and get_homogeneity
+
 def gen_random_2d_partition(split_tries = 32):
     from random import randint, shuffle
     test_cube = cube([0,0],[1,1],min_scale=.05)
-    rd = lambda : randint(0,test_cube.dimension-1)
-    rd1 = lambda : randint(0,1)
+    rd = lambda : randint(0,test_cube.dimension-1)    
     l = [test_cube]
-    for i in range(split_tries):
+    for _ in range(split_tries):
         x = l.pop()
         l = l + x.split(rd())
         shuffle(l)
     return l    
 
+#plots a random example partition if called without parameters,
+#otherwise meant to plot any list of cubes
 def plot_list_of_cubes(l=list()):
     import matplotlib; import matplotlib.pyplot as plt
     from random import random 
@@ -102,4 +173,19 @@ def plot_list_of_cubes(l=list()):
     plt.xlim([1.1*(c.top_parent_boundaries[0][1]-.1), 1.1*(c.top_parent_boundaries[1][1])+.1])
     plt.show()
 
-plot_list_of_cubes();
+#plot_list_of_cubes();
+
+def example_df_xor(length = 250):
+    from random import random, randint
+    from pandas import DataFrame
+    l = [(round(i-.1 + .2*random(),4),round(j-.1+.2*random(),4),i^j) for i,j in  [(randint(0,1),randint(0,1)) for i in range(length)]]
+    return DataFrame(l)
+
+df = example_df_xor(10000) 
+#cc = data_cube(df)
+#print(cc.classes)
+
+from sklearn.preprocessing import MinMaxScaler
+scaler = MinMaxScaler()
+scaler.fit(df[df.columns[:-1]])
+
