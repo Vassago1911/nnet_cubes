@@ -23,7 +23,7 @@ class cube:
                 jxs = jxs + [ix,]        
         return jxs
 
-    def __init__(self,ls=[1,], 
+    def __init__(self,ls=[-1,], 
                       rs=[1,], 
                       min_scale = .1, 
                       max_ratio = 10.,
@@ -96,27 +96,50 @@ class data_cube(cube):
         self.classes = dict(df['target'].value_counts()) #this is why it's only classification!!
         self.homogeneous = len(self.classes) <= 1 #less than 1 class in the cube => homogeneous or empty
 
-    def get_homogeneity(self):
+    def get_homogeneity(self,df,scaler):
+        self.get_classes(df,scaler)
         class_pairs = [(i,j) for i in self.classes for j in self.classes if i!=j]
+        #if there are no class_pairs, then there's either just one or no classes => homogeneous! 
+        if(len(class_pairs)==0):
+            self.homogeneity = 1 #maximally homogeneous       
+            return 1
         f = lambda x,y: (x-y)/(x+y)
         res = list()        
         for i,j in class_pairs:
-            res = res + [f(self.classes[i],self.classes[j]),]
+            res = res + [f(self.classes[i],self.classes[j]),]            
         self.homogeneity = min(res)    
         return min(res)    
 
+    def split(self,i,df,scaler):
+        if(not self.splittable):
+            print('Cube is already too small, no split!')
+            return [self,]
+        print('Split the cube ',self,':')        
+        center_i = (self.lefts[i] + self.rights[i])/2
+        new_left = list(self.lefts); new_left[i] = center_i
+        new_right = list(self.rights); new_right[i] = center_i  
+        cube1 = data_cube(self.lefts, new_right,self.min_scale, self.max_aspect_ratio, self.top_parent_boundaries)
+        cube2 = data_cube(new_left, self.rights,self.min_scale, self.max_aspect_ratio, self.top_parent_boundaries)           
+        cube1.get_homogeneity(df,scaler)
+        cube2.get_homogeneity(df,scaler)
+        print('into: ', cube1,' and ', cube2)              
+        return [cube1, cube2,]
+
     def best_split(self,df,scaler):
-        #make sure they're set
-        self.get_classes(df,scaler)
-        self.get_homogeneity()
+        #make sure they're set        
+        self.get_homogeneity(df,scaler)
 
         #if the cube is already homogeneous, don't split
         if(self.homogeneous):
-            print('Already homogenous, don\'t split.')
+            print('Already homogeneous, don\'t split.')
             return [self,]
         if(not self.splittable):
             print('Too small to split.')
             return [self,]
+        #we should never get here, but I want a transparent error if we ever do
+        if(len(self.get_split_axes())==0):
+            print('No valid axes for splitting!')
+            return  [self,]
         #not homogeneous, still splittable per size, let's find the best axis
         if(len(self.get_split_axes())==1):
             #best axis known it's the only one :)
@@ -126,7 +149,7 @@ class data_cube(cube):
         candidates = [1,2]
         for ax in self.get_split_axes():
             #try to split, find maximal homogeneity among candidates
-            c1,c2 = self.split(ax)
+            c1,c2 = self.split(ax,df,scaler)
             if max(c1.homogeneity, c2.homogeneity) > homogeneity_candidate:
                 candidates = [c1,c2]                
                 homogeneity_candidate = max(c1.homogeneity, c2.homogeneity)
@@ -143,7 +166,8 @@ def from_dataframe(df, min_scale=.1,max_ratio=10):
     scaler.fit(df[df.columns[:-1]])               
     ls = len(df.columns[:-1])*(0,) #left boundaries are zeroes
     rs = len(df.columns[:-1])*(1,) #right boundaries are ones
-    c = data_cube(ls, rs, min_scale, max_ratio, top_parent_boundaries = (ls,rs))            
+    c = data_cube(ls, rs, min_scale, max_ratio, top_parent_boundaries = (ls,rs))     
+    c.get_homogeneity(df,scaler)       
     return c, df, scaler #prepared for handoff to get_classes and get_homogeneity
 
 def gen_random_2d_partition(split_tries = 32):
@@ -173,19 +197,36 @@ def plot_list_of_cubes(l=list()):
     plt.xlim([1.1*(c.top_parent_boundaries[0][1]-.1), 1.1*(c.top_parent_boundaries[1][1])+.1])
     plt.show()
 
-#plot_list_of_cubes();
-
 def example_df_xor(length = 250):
     from random import random, randint
     from pandas import DataFrame
     l = [(round(i-.1 + .2*random(),4),round(j-.1+.2*random(),4),i^j) for i,j in  [(randint(0,1),randint(0,1)) for i in range(length)]]
     return DataFrame(l)
 
+def partition_datacubes_for_df(df):
+    from random import shuffle
+    init_c,df,scaler = from_dataframe(df)
+    inhom_stack = [init_c,]
+    homog_stack = list()
+    empty_stack = list()
+    unsplit_stack = list()
+    while len(inhom_stack) != 0:
+        c = inhom_stack.pop()
+        cs = c.best_split(df,scaler)        
+        if(len(cs)==1): #couldn't split, find right stack / reason
+            if(len(cs[0].classes)==0):
+                empty_stack.append(cs[0])
+            if(len(cs[0].classes)==1):
+                homog_stack.append(cs[0])
+            unsplit_stack.append(cs[0])
+        else:    
+            #did split, but not done
+            inhom_stack = inhom_stack + cs
+        shuffle(inhom_stack)
+    return homog_stack, empty_stack, unsplit_stack
+
 df = example_df_xor(10000) 
-#cc = data_cube(df)
+cc = from_dataframe(df)
 #print(cc.classes)
 
-from sklearn.preprocessing import MinMaxScaler
-scaler = MinMaxScaler()
-scaler.fit(df[df.columns[:-1]])
 
